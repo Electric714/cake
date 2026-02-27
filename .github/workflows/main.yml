@@ -1,52 +1,98 @@
-name: iOS bindings
+name: Build unsigned iOS IPA (Cake Worker)
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
 
 jobs:
-  build-ios:
+  build:
     runs-on: macos-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rust toolchain
+      - name: Xcode version
+        run: xcodebuild -version
+
+      # Rust toolchain is required to build the iOS Rust library/bindings
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
 
-      # Optional: cache Cargo to speed things up
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # If the Makefile uses brew packages (common for cbindgen, protobuf, etc.)
-      - name: Install build dependencies
+      # Optional: only needed if your build complains about missing tools
+      - name: Install build deps (best-effort)
         run: |
           brew update
-          # Uncomment/add what the repo needs:
-          # brew install cbindgen protobuf cmake ninja
+          # If you see errors about missing tools, uncomment/add what it asks for:
+          # brew install cmake ninja cbindgen protobuf
           true
 
-      # Run the repo command
-      - name: Generate iOS bindings
+      - name: Build iOS Rust bindings/library
         run: |
+          set -euo pipefail
+          cd cake-ios
           make ios
 
-      # Upload whatever `make ios` produces (adjust paths)
-      - name: Upload artifacts
+      - name: Build iOS app (unsigned)
+        run: |
+          set -euo pipefail
+
+          PROJECT_PATH="cake-ios-worker-app/Cake Worker.xcodeproj"
+          TARGET_NAME="Cake Worker"
+          DERIVED_DATA="$RUNNER_TEMP/DerivedData"
+
+          rm -rf "$DERIVED_DATA"
+
+          # Build using -target because this project has no schemes.
+          xcodebuild \
+            -project "$PROJECT_PATH" \
+            -target "$TARGET_NAME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+          echo "DerivedData: $DERIVED_DATA"
+
+          APP_PATH="$(find "$DERIVED_DATA" -type d -name "*.app" -path "*Build/Products/Release-iphoneos*" -print -quit)"
+          if [ -z "${APP_PATH:-}" ]; then
+            echo "ERROR: .app not found. Dumping candidate apps:"
+            find "$DERIVED_DATA" -type d -name "*.app" -print || true
+            exit 1
+          fi
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "Found app: $APP_PATH"
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          OUT_DIR="$RUNNER_TEMP/ipa"
+          rm -rf "$OUT_DIR"
+          mkdir -p "$OUT_DIR/Payload"
+
+          cp -R "$APP_PATH" "$OUT_DIR/Payload/"
+
+          IPA_NAME="CakeWorker-unsigned.ipa"
+          (cd "$OUT_DIR" && /usr/bin/zip -qry "$RUNNER_TEMP/$IPA_NAME" Payload)
+
+          echo "IPA at: $RUNNER_TEMP/$IPA_NAME"
+          ls -lah "$RUNNER_TEMP/$IPA_NAME"
+
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-bindings
-          path: |
-            **/*.xcframework
-            **/*.framework
-            **/*.a
-            **/*.swift
-            **/*.h
-            **/Bindings/**
-            **/dist/**
+          name: CakeWorker-unsigned-ipa
+          path: ${{ runner.temp }}/CakeWorker-unsigned.ipa
