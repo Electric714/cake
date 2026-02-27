@@ -1,0 +1,52 @@
+name: iOS bindings
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Rust toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+
+      # Optional: cache Cargo to speed things up
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # If the Makefile uses brew packages (common for cbindgen, protobuf, etc.)
+      - name: Install build dependencies
+        run: |
+          brew update
+          # Uncomment/add what the repo needs:
+          # brew install cbindgen protobuf cmake ninja
+          true
+
+      # Run the repo command
+      - name: Generate iOS bindings
+        run: |
+          make ios
+
+      # Upload whatever `make ios` produces (adjust paths)
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-bindings
+          path: |
+            **/*.xcframework
+            **/*.framework
+            **/*.a
+            **/*.swift
+            **/*.h
+            **/Bindings/**
+            **/dist/**
