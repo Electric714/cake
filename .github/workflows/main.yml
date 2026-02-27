@@ -17,7 +17,6 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      # Rust toolchain is required to build the iOS Rust library/bindings
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -26,31 +25,20 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      # Optional: only needed if your build complains about missing tools
-      - name: Install build deps (best-effort)
-        run: |
-          brew update
-          # If you see errors about missing tools, uncomment/add what it asks for:
-          # brew install cmake ninja cbindgen protobuf
-          true
-
-      - name: Build iOS Rust bindings/library
+      - name: Build iOS bindings + iOS Rust target (root Makefile)
         run: |
           set -euo pipefail
-          cd cake-ios
           make ios
 
-      - name: Build iOS app (unsigned)
+      - name: Build iOS app (unsigned, no scheme)
         run: |
           set -euo pipefail
 
           PROJECT_PATH="cake-ios-worker-app/Cake Worker.xcodeproj"
           TARGET_NAME="Cake Worker"
           DERIVED_DATA="$RUNNER_TEMP/DerivedData"
-
           rm -rf "$DERIVED_DATA"
 
-          # Build using -target because this project has no schemes.
           xcodebuild \
             -project "$PROJECT_PATH" \
             -target "$TARGET_NAME" \
@@ -63,8 +51,6 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             build
-
-          echo "DerivedData: $DERIVED_DATA"
 
           APP_PATH="$(find "$DERIVED_DATA" -type d -name "*.app" -path "*Build/Products/Release-iphoneos*" -print -quit)"
           if [ -z "${APP_PATH:-}" ]; then
